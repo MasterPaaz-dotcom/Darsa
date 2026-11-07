@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="sw">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<title>Darasa</title>
+<style>
+:root{--bg:#f6f7f6;--fg:#14201d;--card:#fff;--m:#5b6b66;--p:#0f766e;--b:#d9e0dd}
+@media(prefers-color-scheme:dark){:root{--bg:#101615;--fg:#e8efec;--card:#18211f;--m:#93a39d;--p:#2dd4bf;--b:#2a3835}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+.wrap{max-width:520px;margin:0 auto;padding:14px}
+.bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--b);position:sticky;top:0;background:var(--bg)}
+.bar b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+h1{color:var(--p);margin:30px 0 4px}
+h3,h4{margin:14px 0 8px}
+.card{background:var(--card);border:1px solid var(--b);border-radius:12px;padding:12px;margin:10px 0}
+.m{color:var(--m);font-size:14px;display:block}
+.code{font-size:22px;letter-spacing:3px;color:var(--p)}
+input,select,textarea{width:100%;padding:12px;margin:5px 0;border:1px solid var(--b);border-radius:10px;background:var(--bg);color:var(--fg);font:inherit}
+button{width:100%;padding:12px;margin:6px 0;border:0;border-radius:10px;background:var(--p);color:#fff;font:inherit;font-weight:600}
+button.ghost{background:transparent;color:var(--p);width:auto;padding:6px 10px;margin:0}
+.days{display:flex;flex-wrap:wrap;gap:6px}
+.days label{border:1px solid var(--b);border-radius:20px;padding:6px 10px;font-size:14px}
+.row{display:flex;gap:8px}
+.tap{cursor:pointer}
+.acts{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.acts button{padding:6px 8px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+const SB_URL='https://knbnvhosfqwddnbvrhio.supabase.co';
+const SB_KEY='sb_publishable_V6-y_IJquhygtoeWpexTGg_-gA8pcqf';
+const sb=supabase.createClient(SB_URL,SB_KEY);
+const $=id=>document.getElementById(id);
+const app=$('app');
+const PT={free:'Bure',weekly:'Kila wiki',monthly:'Kila mwezi',one_time:'Mara moja'};
+const DAYS=['Jumapili','Jumatatu','Jumanne','Jumatano','Alhamisi','Ijumaa','Jumamosi'];
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const show=h=>{app.innerHTML=h;window.scrollTo(0,0)};
+const run=async fn=>{try{await fn()}catch(e){alert(e.message||e)}};
+const head=(back,t)=>`<div class="bar">${back?`<button class="ghost" onclick="${back}">←</button>`:''}<b>${esc(t)}</b><button class="ghost" onclick="sb.auth.signOut()">Toka</button></div>`;
+const fmt=d=>d?new Date(d).toLocaleString('sw-TZ',{timeZone:'Africa/Dar_es_Salaam',weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'Bila ratiba';
+let me=null,teacher=null;const LS={};
+
+async function init(){
+  const {data:{session}}=await sb.auth.getSession();
+  me=session?.user||null;
+  sb.auth.onAuthStateChange((ev,s)=>{
+    const u=s?.user||null,changed=(u?.id||null)!==(me?.id||null);
+    me=u;
+    if(changed){if(!u)localStorage.removeItem('nav');setTimeout(route,0)}
+  });
+  route();
+}
+async function route(){
+  if(!me)return authView();
+  const {data}=await sb.from('teachers').select('*').eq('id',me.id).maybeSingle();
+  teacher=data;
+  if(!teacher)return roleView();
+  const n=(localStorage.getItem('nav')||'').split(':');
+  try{
+    if(n[0]==='f')return await faniView(n[1]);
+    if(n[0]==='k')return await kitabuView(n[1]);
+  }catch(e){localStorage.removeItem('nav')}
+  teacherHome();
+}
+
+/* ---------- LOGIN ---------- */
+function authView(mode='login'){
+  const s=mode==='signup';
+  show(`<div class="wrap"><h1>Darasa</h1><span class="m">Masomo ya sauti kwa ratiba</span>
+  ${s?'<input id="n" placeholder="Jina kamili"><input id="p" placeholder="Namba ya simu" inputmode="tel">':''}
+  <input id="e" type="email" placeholder="Email"><input id="w" type="password" placeholder="Nenosiri (angalau herufi 6)">
+  <button onclick="doAuth('${mode}')">${s?'Jisajili':'Ingia'}</button>
+  <button class="ghost" onclick="authView('${s?'login':'signup'}')">${s?'Nina akaunti, ingia':'Sina akaunti, jisajili'}</button></div>`);
+}
+function doAuth(mode){run(async()=>{
+  const email=$('e').value.trim(),password=$('w').value;
+  if(mode==='signup'){
+    const r=await sb.auth.signUp({email,password,options:{data:{full_name:$('n').value.trim(),phone:$('p').value.trim()}}});
+    if(r.error)throw r.error;
+    if(!r.data.session){alert('Angalia email yako uthibitishe akaunti, kisha ingia.');authView()}
+  }else{
+    const r=await sb.auth.signInWithPassword({email,password});
+    if(r.error)throw r.error;
+  }
+})}
+
+/* ---------- CHAGUA ROLE ---------- */
+function roleView(){
+  show(`${head('','Karibu')}<div class="wrap">
+  <div class="card"><h3>Mimi ni mwalimu</h3><input id="dn" placeholder="Jina lako (mf. Ustadh Ali)"><input id="pi" placeholder="Namba ya malipo (mf. M-Pesa 07xx xxx xxx, Jina)"><button onclick="mkTeacher()">Anza kufundisha</button></div>
+  <div class="card"><h3>Mimi ni mwanafunzi</h3><input id="jc" placeholder="Join code ya mwalimu"><button onclick="joinT()">Jiunge</button></div></div>`);
+}
+function mkTeacher(){run(async()=>{
+  const n=$('dn').value.trim();if(!n)throw 'Weka jina lako';
+  const {error}=await sb.rpc('become_teacher',{p_display_name:n,p_payment_info:$('pi').value.trim()||null});
+  if(error)throw error;route();
+})}
+function joinT(){run(async()=>{
+  const {error}=await sb.rpc('join_with_code',{p_code:$('jc').value});
+  if(error)throw error;
+  alert('Umejiunga! Sehemu ya wanafunzi (masomo, malipo, player) inakuja hatua ya 3.');
+})}
+
+/* ---------- MWALIMU: NYUMBANI ---------- */
+async function teacherHome(){
+  localStorage.removeItem('nav');
+  const {data:fs=[]}=await sb.from('fani').select('*').order('sort_order');
+  show(`${head('',teacher.display_name)}<div class="wrap">
+  <div class="card">Join code yako: <b class="code">${esc(teacher.join_code)}</b><span class="m">Wape wanafunzi code hii wajiunge</span></div>
+  <h3>Fani zako</h3>
+  ${fs.map(f=>`<div class="card tap" onclick="faniView('${f.id}')"><b>${esc(f.name)}</b><span class="m">${PT[f.price_type]}${f.price_amount?' · '+f.price_amount.toLocaleString()+' TZS':''}</span></div>`).join('')||'<span class="m">Bado hujaweka fani.</span>'}
+  <div class="card"><h4>+ Fani mpya</h4><input id="fn" placeholder="Jina la fani (mf. Fiqhi)">
+  <select id="ft">${Object.entries(PT).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
+  <input id="fa" type="number" inputmode="numeric" placeholder="Bei (TZS), acha tupu kama ni bure">
+  <button onclick="addFani(${fs.length})">Ongeza fani</button></div></div>`);
+}
+function addFani(n){run(async()=>{
+  const name=$('fn').value.trim();if(!name)throw 'Weka jina la fani';
+  const t=$('ft').value;
+  const {error}=await sb.from('fani').insert({teacher_id:me.id,name,price_type:t,price_amount:t==='free'?0:(+$('fa').value||0),sort_order:n+1});
+  if(error)throw error;teacherHome();
+})}
+
+/* ---------- FANI -> VITABU ---------- */
+async function faniView(id){
+  localStorage.setItem('nav','f:'+id);
+  const {data:f}=await sb.from('fani').select('*').eq('id',id).single();
+  const {data:ks=[]}=await sb.from('kitabu').select('*').eq('fani_id',id).order('sort_order');
+  show(`${head('teacherHome()',f.name)}<div class="wrap">
+  <div class="card"><h4>Malipo ya fani</h4><span class="m">Sasa: ${PT[f.price_type]}${f.price_amount?' · '+f.price_amount.toLocaleString()+' TZS':''}</span>
+  <select id="pt">${Object.entries(PT).map(([k,v])=>`<option value="${k}" ${k===f.price_type?'selected':''}>${v}</option>`).join('')}</select>
+  <input id="pa" type="number" inputmode="numeric" placeholder="Bei (TZS)" value="${f.price_amount||''}">
+  <button onclick="changePrice('${id}','${f.price_type}')">Badili malipo</button></div>
+  <h3>Vitabu</h3>
+  ${ks.map(k=>`<div class="card tap" onclick="kitabuView('${k.id}')"><b>${esc(k.title)}</b></div>`).join('')||'<span class="m">Bado hujaweka kitabu.</span>'}
+  <div class="card"><h4>+ Kitabu kipya</h4><input id="kt" placeholder="Jina la kitabu (mf. Safina)"><button onclick="addKitabu('${id}',${ks.length})">Ongeza kitabu</button></div></div>`);
+}
+function addKitabu(fid,n){run(async()=>{
+  const title=$('kt').value.trim();if(!title)throw 'Weka jina la kitabu';
+  const {error}=await sb.from('kitabu').insert({fani_id:fid,title,sort_order:n+1});
+  if(error)throw error;faniView(fid);
+})}
+
+function changePrice(id,old){run(async()=>{
+  const t=$('pt').value,a=+$('pa').value||0;
+  if(t!=='free'&&!a)throw 'Weka bei';
+  if(old==='free'&&t!=='free'&&!confirm('Wanafunzi waliopo watapewa siku 7, kisha watahitaji kulipa. Endelea?'))return;
+  const {error}=await sb.rpc('change_fani_price',{p_fani:id,p_type:t,p_amount:a});
+  if(error)throw error;
+  faniView(id);
+})}
+
+/* ---------- KITABU -> RATIBA + MASOMO ---------- */
+async function kitabuView(id){
+  localStorage.setItem('nav','k:'+id);
+  const {data:k}=await sb.from('kitabu').select('*').eq('id',id).single();
+  const {data:ms=[]}=await sb.from('masomo').select('*').eq('kitabu_id',id).order('sort_order');
+  ms.forEach(m=>LS[m.id]=m);
+  show(`${head(`faniView('${k.fani_id}')`,k.title)}<div class="wrap">
+  <div class="card"><h4>Ratiba ya kufungua masomo</h4>
+  <div class="days">${DAYS.map((d,i)=>`<label><input type="checkbox" class="d" value="${i}" style="width:auto;margin:0 4px 0 0" ${k.schedule_days.includes(i)?'checked':''}>${d}</label>`).join('')}</div>
+  <div class="row"><div style="flex:1"><span class="m">Saa</span><input id="st" type="time" value="${k.schedule_time.slice(0,5)}"></div>
+  <div style="flex:1"><span class="m">Masomo kwa mara</span><input id="sp" type="number" min="1" value="${k.lessons_per_slot}"></div></div>
+  <span class="m">Kuanzia tarehe</span><input id="sd" type="date" value="${k.start_date}">
+  <button onclick="saveSched('${id}')">Hifadhi ratiba</button></div>
+  <h3>Masomo (${ms.length})</h3>
+  ${ms.map(m=>`<div class="card"><b>${m.sort_order}. ${esc(m.title)}</b><span class="m">${m.audio_path?'🎧 ':'⚠️ hakuna audio · '}${m.duration_seconds?Math.round(m.duration_seconds/60)+' dk · ':''}🔒 ${fmt(m.unlock_at)}</span><div class="acts">${m.audio_path?`<button class="ghost" onclick="playSomo('${m.id}','${m.audio_path}')">▶ Sikiliza</button>`:''}<button class="ghost" onclick="$('rf_${m.id}').click()">Badili audio</button><button class="ghost" onclick="renameSomo('${m.id}','${id}')">Badili jina</button><button class="ghost" style="color:#ef4444" onclick="delSomo('${m.id}','${id}')">Futa</button></div><input type="file" id="rf_${m.id}" accept="audio/*,.opus,.m4a,.mp3,.aac,.wav" style="display:none;width:auto" onchange="replaceAudio('${m.id}','${id}',this)"><div id="pl_${m.id}"></div></div>`).join('')||'<span class="m">Bado hujaweka somo.</span>'}
+  <div class="card"><h4>+ Somo jipya</h4><input id="mt" placeholder="Jina la somo (mf. Masharti ya Swala)" value="${esc(localStorage.getItem('dr_t_'+id)||'')}" oninput="localStorage.setItem('dr_t_${id}',this.value)">
+  <textarea id="md" rows="2" placeholder="Maelezo mafupi (hiari)" oninput="localStorage.setItem('dr_d_${id}',this.value)">${esc(localStorage.getItem('dr_d_'+id)||'')}</textarea>
+  <input id="mf" type="file" accept="audio/*,.opus,.m4a,.mp3,.aac,.wav">
+  <button id="up" onclick="addSomo('${id}',${ms.length},${k.schedule_days.length>0})">Pakia somo</button></div></div>`);
+}
+function saveSched(id){run(async()=>{
+  const days=[...document.querySelectorAll('.d:checked')].map(x=>+x.value);
+  if(!days.length)throw 'Chagua angalau siku moja';
+  const {error}=await sb.from('kitabu').update({schedule_days:days,schedule_time:$('st').value,lessons_per_slot:+$('sp').value||1,start_date:$('sd').value}).eq('id',id);
+  if(error)throw error;
+  const r=await sb.rpc('apply_schedule',{p_kitabu:id});if(r.error)throw r.error;
+  kitabuView(id);
+})}
+function renameSomo(mid,kid){run(async()=>{
+  const t=prompt('Jina jipya la somo:',LS[mid]?.title||'');
+  if(t===null||!t.trim())return;
+  const {error}=await sb.from('masomo').update({title:t.trim()}).eq('id',mid);
+  if(error)throw error;
+  kitabuView(kid);
+})}
+function replaceAudio(mid,kid,inp){run(async()=>{
+  const f=inp.files[0];if(!f)return;
+  const old=LS[mid]?.audio_path;
+  const ext=(f.name.split('.').pop()||'m4a').toLowerCase();
+  const path=`${me.id}/${crypto.randomUUID()}.${ext}`;
+  const up=await sb.storage.from('audio').upload(path,f,{contentType:f.type||undefined});
+  if(up.error)throw up.error;
+  const {error}=await sb.from('masomo').update({audio_path:path,duration_seconds:await dur(f)}).eq('id',mid);
+  if(error)throw error;
+  if(old)await sb.storage.from('audio').remove([old]);
+  kitabuView(kid);
+})}
+function delSomo(mid,kid){run(async()=>{
+  const m=LS[mid];
+  if(!confirm('Futa somo "'+m.title+'"? Haliwezi kurudishwa.'))return;
+  if(m.audio_path)await sb.storage.from('audio').remove([m.audio_path]);
+  const {error}=await sb.from('masomo').delete().eq('id',mid);
+  if(error)throw error;
+  const {data:rest=[]}=await sb.from('masomo').select('id').eq('kitabu_id',kid).order('sort_order').order('created_at');
+  for(let i=0;i<rest.length;i++)await sb.from('masomo').update({sort_order:i+1}).eq('id',rest[i].id);
+  const {data:k}=await sb.from('kitabu').select('schedule_days').eq('id',kid).single();
+  if(k?.schedule_days?.length){const r=await sb.rpc('apply_schedule',{p_kitabu:kid});if(r.error)throw r.error}
+  kitabuView(kid);
+})}
+function playSomo(mid,path){run(async()=>{
+  const {data,error}=await sb.storage.from('audio').createSignedUrl(path,3600);
+  if(error)throw error;
+  $('pl_'+mid).innerHTML=`<audio controls autoplay preload="metadata" src="${data.signedUrl}" style="width:100%;margin-top:8px"></audio>`;
+})}
+const dur=f=>new Promise(r=>{const a=new Audio();a.preload='metadata';a.src=URL.createObjectURL(f);a.onloadedmetadata=()=>r(Math.round(a.duration)||null);a.onerror=()=>r(null)});
+function addSomo(kid,n,hasSched){run(async()=>{
+  const title=$('mt').value.trim(),f=$('mf').files[0];
+  if(!title)throw 'Weka jina la somo';if(!f)throw 'Chagua audio';
+  const b=$('up');b.disabled=true;b.textContent='Inapakia...';
+  try{
+    const ext=(f.name.split('.').pop()||'m4a').toLowerCase();
+    const path=`${me.id}/${crypto.randomUUID()}.${ext}`;
+    const up=await sb.storage.from('audio').upload(path,f,{contentType:f.type||undefined});
+    if(up.error)throw up.error;
+    const {error}=await sb.from('masomo').insert({kitabu_id:kid,title,description:$('md').value.trim()||null,audio_path:path,duration_seconds:await dur(f),sort_order:n+1});
+    if(error)throw error;
+    if(hasSched){const r=await sb.rpc('apply_schedule',{p_kitabu:kid});if(r.error)throw r.error}
+    localStorage.removeItem('dr_t_'+kid);localStorage.removeItem('dr_d_'+kid);
+    kitabuView(kid);
+  }catch(e){b.disabled=false;b.textContent='Pakia somo';throw e}
+})}
+
+init();
+</script>
+</body>
+</html>
