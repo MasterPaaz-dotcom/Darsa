@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="sw">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<title>Darasa</title>
+<style>
+:root{--bg:#f6f7f6;--fg:#14201d;--card:#fff;--m:#5b6b66;--p:#0f766e;--b:#d9e0dd}
+@media(prefers-color-scheme:dark){:root{--bg:#101615;--fg:#e8efec;--card:#18211f;--m:#93a39d;--p:#2dd4bf;--b:#2a3835}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+.wrap{max-width:520px;margin:0 auto;padding:14px}
+.bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--b);position:sticky;top:0;background:var(--bg)}
+.bar b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+h1{color:var(--p);margin:30px 0 4px}
+h3,h4{margin:14px 0 8px}
+.card{background:var(--card);border:1px solid var(--b);border-radius:12px;padding:12px;margin:10px 0}
+.m{color:var(--m);font-size:14px;display:block}
+.code{font-size:22px;letter-spacing:3px;color:var(--p)}
+input,select,textarea{width:100%;padding:12px;margin:5px 0;border:1px solid var(--b);border-radius:10px;background:var(--bg);color:var(--fg);font:inherit}
+button{width:100%;padding:12px;margin:6px 0;border:0;border-radius:10px;background:var(--p);color:#fff;font:inherit;font-weight:600}
+button.ghost{background:transparent;color:var(--p);width:auto;padding:6px 10px;margin:0}
+.days{display:flex;flex-wrap:wrap;gap:6px}
+.days label{border:1px solid var(--b);border-radius:20px;padding:6px 10px;font-size:14px}
+.row{display:flex;gap:8px}
+.tap{cursor:pointer}
+.player{position:fixed;left:0;right:0;bottom:0;z-index:5;background:var(--card);border-top:1px solid var(--b);padding:10px 14px calc(10px + env(safe-area-inset-bottom))}
+.player .row button{padding:8px;margin:4px 0}
+.acts{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.acts button{padding:6px 8px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+const SB_URL='https://knbnvhosfqwddnbvrhio.supabase.co';
+const SB_KEY='sb_publishable_V6-y_IJquhygtoeWpexTGg_-gA8pcqf';
+const sb=supabase.createClient(SB_URL,SB_KEY);
+const $=id=>document.getElementById(id);
+const app=$('app');
+const PT={free:'Bure',weekly:'Kila wiki',monthly:'Kila mwezi',one_time:'Mara moja'};
+const DAYS=['Jumapili','Jumatatu','Jumanne','Jumatano','Alhamisi','Ijumaa','Jumamosi'];
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const show=h=>{app.innerHTML=h;window.scrollTo(0,0)};
+const run=async fn=>{try{await fn()}catch(e){alert(e.message||e)}};
+const head=(back,t)=>`<div class="bar">${back?`<button class="ghost" onclick="${back}">←</button>`:''}<b>${esc(t)}</b><button class="ghost" onclick="sb.auth.signOut()">Toka</button></div>`;
+const fmt=d=>d?new Date(d).toLocaleString('sw-TZ',{timeZone:'Africa/Dar_es_Salaam',weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'Bila ratiba';
+let me=null,teacher=null;const LS={};
+
+async function init(){
+  const {data:{session}}=await sb.auth.getSession();
+  me=session?.user||null;
+  sb.auth.onAuthStateChange((ev,s)=>{
+    const u=s?.user||null,changed=(u?.id||null)!==(me?.id||null);
+    me=u;
+    if(changed){if(!u)localStorage.removeItem('nav');setTimeout(route,0)}
+  });
+  route();
+}
+async function route(){
+  if(!me)return authView();
+  const {data}=await sb.from('teachers').select('*').eq('id',me.id).maybeSingle();
+  teacher=data;
+  let stu=false;
+  if(!teacher){
+    const {count}=await sb.from('teacher_students').select('*',{count:'exact',head:true}).eq('student_id',me.id);
+    if(!count)return roleView();
+    stu=true;
+  }
+  const n=(localStorage.getItem('nav')||'').split(':');
+  try{
+    if(!stu&&n[0]==='f')return await faniView(n[1]);
+    if(!stu&&n[0]==='k')return await kitabuView(n[1]);
+    if(stu&&n[0]==='sf')return await studentFani(n[1]);
+    if(stu&&n[0]==='sk')return await studentKitabu(n[1]);
+  }catch(e){localStorage.removeItem('nav')}
+  stu?studentHome():teacherHome();
+}
+
+/* ---------- LOGIN ---------- */
+function authView(mode='login'){
+  const s=mode==='signup';
+  show(`<div class="wrap"><h1>Darasa</h1><span class="m">Masomo ya sauti kwa ratiba</span>
+  ${s?'<input id="n" placeholder="Jina kamili"><input id="p" placeholder="Namba ya simu" inputmode="tel">':''}
+  <input id="e" type="email" placeholder="Email"><input id="w" type="password" placeholder="Nenosiri (angalau herufi 6)">
+  <button onclick="doAuth('${mode}')">${s?'Jisajili':'Ingia'}</button>
+  <button class="ghost" onclick="authView('${s?'login':'signup'}')">${s?'Nina akaunti, ingia':'Sina akaunti, jisajili'}</button></div>`);
+}
+function doAuth(mode){run(async()=>{
+  const email=$('e').value.trim(),password=$('w').value;
+  if(mode==='signup'){
+    const r=await sb.auth.signUp({email,password,options:{data:{full_name:$('n').value.trim(),phone:$('p').value.trim()}}});
+    if(r.error)throw r.error;
+    if(!r.data.session){alert('Angalia email yako uthibitishe akaunti, kisha ingia.');authView()}
+  }else{
+    const r=await sb.auth.signInWithPassword({email,password});
+    if(r.error)throw r.error;
+  }
+})}
+
+/* ---------- CHAGUA ROLE ---------- */
+function roleView(){
+  show(`${head('','Karibu')}<div class="wrap">
+  <div class="card"><h3>Mimi ni mwalimu</h3><input id="dn" placeholder="Jina lako (mf. Ustadh Ali)"><input id="pi" placeholder="Namba ya malipo (mf. M-Pesa 07xx xxx xxx, Jina)"><button onclick="mkTeacher()">Anza kufundisha</button></div>
+  <div class="card"><h3>Mimi ni mwanafunzi</h3><input id="jc" placeholder="Join code ya mwalimu"><button onclick="joinT()">Jiunge</button></div></div>`);
+}
+function mkTeacher(){run(async()=>{
+  const n=$('dn').value.trim();if(!n)throw 'Weka jina lako';
+  const {error}=await sb.rpc('become_teacher',{p_display_name:n,p_payment_info:$('pi').value.trim()||null});
+  if(error)throw error;route();
+})}
+function joinT(){run(async()=>{
+  const {error}=await sb.rpc('join_with_code',{p_code:$('jc').value});
+  if(error)throw error;
+  route();
+})}
+
+/* ---------- MWALIMU: NYUMBANI ---------- */
+async function teacherHome(){
+  localStorage.removeItem('nav');
+  const {data:fs=[]}=await sb.from('fani').select('*').order('sort_order');
+  const {data:pays=[]}=await sb.from('payments').select('id,amount,reference,enrollments(fani(name),profiles(full_name,phone))').eq('status','pending').order('created_at');
+  const {data:bl=[]}=await sb.from('blocked_students').select('*').order('created_at');
+  const pe=teacher.plan_expires_at?new Date(teacher.plan_expires_at):null;
+  if(!tActive(teacher))return show(`${head('',teacher.display_name)}<div class="wrap"><div class="card"><h3>⛔ Ada ya huduma imeisha</h3><p>Ada yako iliisha tarehe ${dt(pe)}. Wanafunzi wako hawawezi kufungua masomo kwa sasa.</p><span class="m">Wasiliana na msimamizi wa Darasa ulipe ada ili huduma irudi.</span></div></div>`);
+  const grace=pe?Math.max(0,Math.ceil((pe.getTime()+7*864e5-Date.now())/864e5)):0;
+  const banner=pe&&pe.getTime()-Date.now()<7*864e5?(pe<new Date()?`<div class="card" style="border-color:#ef4444">⚠️ Ada yako iliisha ${dt(pe)}. Una siku ${grace} za neema kabla huduma haijafungwa kabisa.</div>`:`<div class="card" style="border-color:#f59e0b">⏰ Ada yako inaisha ${dt(pe)}.</div>`):'';
+  show(`${head('',teacher.display_name)}<div class="wrap">${banner}
+  <div class="card">Join code yako: <b class="code">${esc(teacher.join_code)}</b><span class="m">Wape wanafunzi code hii wajiunge</span></div>
+  <details class="card"><summary><b>⚙️ Mipangilio yangu</b></summary>
+  <span class="m" style="margin-top:8px">Jina lako</span><input id="tn" value="${esc(teacher.display_name)}">
+  <span class="m">Namba ya malipo (wanafunzi wataiona wanapolipa)</span><input id="tp" placeholder="mf. M-Pesa 07xx xxx xxx, Jina" value="${esc(teacher.payment_info||'')}">
+  <span class="m">Link ya group la WhatsApp (hiari)</span><input id="tg" placeholder="https://chat.whatsapp.com/..." value="${esc(teacher.whatsapp_group||'')}">
+  <span class="m">Au namba yako ya WhatsApp, ikiwa huna group (anza na 255)</span><input id="tw" inputmode="tel" placeholder="mf. 255712345678" value="${esc(teacher.whatsapp_number||'')}">
+  <button onclick="saveTeacher()">Hifadhi</button>
+  ${bl.length?`<h4>Waliotolewa (${bl.length})</h4>${bl.map(b=>`<div class="row" style="align-items:center"><span style="flex:1">${esc(b.student_name||'Mwanafunzi')}</span><button class="ghost" onclick="unblock('${b.student_id}')">Rudisha</button></div>`).join('')}`:''}</details>
+  ${pays.length?`<h3>Malipo yanayosubiri (${pays.length})</h3>${pays.map(p=>`<div class="card"><b>${esc(p.enrollments?.profiles?.full_name||'Mwanafunzi')}</b> · ${p.amount.toLocaleString()} TZS<span class="m">${esc(p.enrollments?.fani?.name||'')} · ${esc(p.enrollments?.profiles?.phone||'')}${p.reference?' · Ref: '+esc(p.reference):''}</span><div class="row"><button onclick="decide('${p.id}',1)">Idhinisha</button><button style="background:#ef4444" onclick="decide('${p.id}',0)">Kataa</button></div></div>`).join('')}`:''}
+  <h3>Fani zako</h3>
+  ${fs.map(f=>`<div class="card tap" onclick="faniView('${f.id}')"><b>${esc(f.name)}</b><span class="m">${PT[f.price_type]}${f.price_amount?' · '+f.price_amount.toLocaleString()+' TZS':''}</span></div>`).join('')||'<span class="m">Bado hujaweka fani.</span>'}
+  <div class="card"><h4>+ Fani mpya</h4><input id="fn" placeholder="Jina la fani (mf. Fiqhi)">
+  <select id="ft">${Object.entries(PT).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
+  <input id="fa" type="number" inputmode="numeric" placeholder="Bei (TZS), acha tupu kama ni bure">
+  <button onclick="addFani(${fs.length})">Ongeza fani</button></div></div>`);
+}
+function addFani(n){run(async()=>{
+  const name=$('fn').value.trim();if(!name)throw 'Weka jina la fani';
+  const t=$('ft').value;
+  const {error}=await sb.from('fani').insert({teacher_id:me.id,name,price_type:t,price_amount:t==='free'?0:(+$('fa').value||0),sort_order:n+1});
+  if(error)throw error;teacherHome();
+})}
+
+/* ---------- FANI -> VITABU ---------- */
+async function faniView(id){
+  localStorage.setItem('nav','f:'+id);
+  const {data:f}=await sb.from('fani').select('*').eq('id',id).single();
+  const {data:ks=[]}=await sb.from('kitabu').select('*').eq('fani_id',id).order('sort_order');
+  const {data:st=[]}=await sb.from('enrollments').select('id,student_id,status,expires_at,profiles(full_name,phone),payments(amount,status)').eq('fani_id',id).order('created_at');
+  const live=st.filter(x=>x.status!=='rejected');
+  const stRows=live.map(x=>{
+    const ap=(x.payments||[]).filter(p=>p.status==='approved'),tot=ap.reduce((s,p)=>s+p.amount,0);
+    const pend=(x.payments||[]).some(p=>p.status==='pending');
+    const s=hasAcc(x)?'✅ '+(x.expires_at?'Hadi '+dt(x.expires_at):'Bila mwisho'):(pend?'⏳ Anasubiri idhini':(x.status==='active'?'⚠️ Muda umeisha':'Hajalipa'));
+    return `<div class="card"><b>${esc(x.profiles?.full_name||'Mwanafunzi')}</b><span class="m">${esc(x.profiles?.phone||'')}</span><span class="m">${s} · Amelipa: ${tot.toLocaleString()} TZS (mara ${ap.length})</span><button class="ghost" style="color:#ef4444;margin-top:4px" onclick="removeStu('${x.student_id}')">Mtoe</button></div>`;
+  }).join('');
+  show(`${head('teacherHome()',f.name)}<div class="wrap">
+  <div class="card"><h4>Malipo ya fani</h4><span class="m">Sasa: ${PT[f.price_type]}${f.price_amount?' · '+f.price_amount.toLocaleString()+' TZS':''}</span>
+  <select id="pt">${Object.entries(PT).map(([k,v])=>`<option value="${k}" ${k===f.price_type?'selected':''}>${v}</option>`).join('')}</select>
+  <input id="pa" type="number" inputmode="numeric" placeholder="Bei (TZS)" value="${f.price_amount||''}">
+  <button onclick="changePrice('${id}','${f.price_type}')">Badili malipo</button></div>
+  <h3>Vitabu</h3>
+  ${ks.map(k=>`<div class="card tap" onclick="kitabuView('${k.id}')"><b>${esc(k.title)}</b></div>`).join('')||'<span class="m">Bado hujaweka kitabu.</span>'}
+  <div class="card"><h4>+ Kitabu kipya</h4><input id="kt" placeholder="Jina la kitabu (mf. Safina)"><button onclick="addKitabu('${id}',${ks.length})">Ongeza kitabu</button></div>
+  <h3>Wanafunzi (${live.length}) · wanaofuata sasa: ${live.filter(hasAcc).length}</h3>
+  ${stRows||'<span class="m">Bado hakuna mwanafunzi kwenye fani hii.</span>'}</div>`);
+}
+function addKitabu(fid,n){run(async()=>{
+  const title=$('kt').value.trim();if(!title)throw 'Weka jina la kitabu';
+  const {error}=await sb.from('kitabu').insert({fani_id:fid,title,sort_order:n+1});
+  if(error)throw error;faniView(fid);
+})}
+
+function changePrice(id,old){run(async()=>{
+  const t=$('pt').value,a=+$('pa').value||0;
+  if(t!=='free'&&!a)throw 'Weka bei';
+  if(old==='free'&&t!=='free'&&!confirm('Wanafunzi waliopo watapewa siku 7, kisha watahitaji kulipa. Endelea?'))return;
+  const {error}=await sb.rpc('change_fani_price',{p_fani:id,p_type:t,p_amount:a});
+  if(error)throw error;
+  faniView(id);
+})}
+
+/* ---------- KITABU -> RATIBA + MASOMO ---------- */
+async function kitabuView(id){
+  localStorage.setItem('nav','k:'+id);
+  const {data:k}=await sb.from('kitabu').select('*').eq('id',id).single();
+  const {data:ms=[]}=await sb.from('masomo').select('*').eq('kitabu_id',id).order('sort_order');
+  ms.forEach(m=>LS[m.id]=m);
+  show(`${head(`faniView('${k.fani_id}')`,k.title)}<div class="wrap">
+  <div class="card"><h4>Ratiba ya kufungua masomo</h4>
+  <span class="m">Mfumo</span>
+  <select id="sm"><option value="class" ${k.schedule_mode!=='individual'?'selected':''}>Darasa zima (tarehe moja kwa wote)</option><option value="individual" ${k.schedule_mode==='individual'?'selected':''}>Kila mwanafunzi kivyake (anaanza somo la 1 akijiunga)</option></select>
+  <span class="m" style="margin-bottom:8px">${k.schedule_mode==='individual'?'Kila mwanafunzi anapata somo la kwanza mara moja, kisha masomo mengine yanafunguka kwa siku na saa ulizochagua, kuanzia siku yake.':'Wanafunzi wote wanaona masomo yaliyokwisha funguka, na yaliyobaki yanafunguka kwa tarehe zilezile kwa wote.'}</span>
+  <div class="days">${DAYS.map((d,i)=>`<label><input type="checkbox" class="d" value="${i}" style="width:auto;margin:0 4px 0 0" ${k.schedule_days.includes(i)?'checked':''}>${d}</label>`).join('')}</div>
+  <div class="row"><div style="flex:1"><span class="m">Saa</span><input id="st" type="time" value="${k.schedule_time.slice(0,5)}"></div>
+  <div style="flex:1"><span class="m">Masomo kwa mara</span><input id="sp" type="number" min="1" value="${k.lessons_per_slot}"></div></div>
+  <span class="m">Kuanzia tarehe</span><input id="sd" type="date" value="${k.start_date}">
+  <button onclick="saveSched('${id}','${k.schedule_mode}')">Hifadhi ratiba</button></div>
+  <h3>Masomo (${ms.length})</h3>
+  ${ms.map(m=>`<div class="card"><b>${m.sort_order}. ${esc(m.title)}</b><span class="m">${m.audio_path?'🎧 ':'⚠️ hakuna audio · '}${m.duration_seconds?Math.round(m.duration_seconds/60)+' dk · ':''}${k.schedule_mode==='individual'?'👤 Inafunguka kwa ratiba ya kila mwanafunzi':'🔒 '+fmt(m.unlock_at)}</span><div class="acts">${m.audio_path?`<button class="ghost" onclick="playSomo('${m.id}','${m.audio_path}')">▶ Sikiliza</button>`:''}<button class="ghost" onclick="$('rf_${m.id}').click()">Badili audio</button><button class="ghost" onclick="renameSomo('${m.id}','${id}')">Badili jina</button><button class="ghost" style="color:#ef4444" onclick="delSomo('${m.id}','${id}')">Futa</button></div><input type="file" id="rf_${m.id}" accept="audio/*,.opus,.m4a,.mp3,.aac,.wav" style="display:none;width:auto" onchange="replaceAudio('${m.id}','${id}',this)"><div id="pl_${m.id}"></div></div>`).join('')||'<span class="m">Bado hujaweka somo.</span>'}
+  <div class="card"><h4>+ Somo jipya</h4><input id="mt" placeholder="Jina la somo (mf. Masharti ya Swala)" value="${esc(localStorage.getItem('dr_t_'+id)||'')}" oninput="localStorage.setItem('dr_t_${id}',this.value)">
+  <textarea id="md" rows="2" placeholder="Maelezo mafupi (hiari)" oninput="localStorage.setItem('dr_d_${id}',this.value)">${esc(localStorage.getItem('dr_d_'+id)||'')}</textarea>
+  <input id="mf" type="file" accept="audio/*,.opus,.m4a,.mp3,.aac,.wav">
+  <button id="up" onclick="addSomo('${id}',${ms.length},${k.schedule_days.length>0})">Pakia somo</button></div></div>`);
+}
+function saveSched(id,oldMode){run(async()=>{
+  const days=[...document.querySelectorAll('.d:checked')].map(x=>+x.value);
+  if(!days.length)throw 'Chagua angalau siku moja';
+  const mode=$('sm').value;
+  if(mode!==oldMode&&!confirm('Kubadilisha mfumo kunaweza kufunga tena masomo ambayo wanafunzi walishafungua. Endelea?'))return;
+  const {error}=await sb.from('kitabu').update({schedule_mode:mode,schedule_days:days,schedule_time:$('st').value,lessons_per_slot:+$('sp').value||1,start_date:$('sd').value}).eq('id',id);
+  if(error)throw error;
+  const r=await sb.rpc('apply_schedule',{p_kitabu:id});if(r.error)throw r.error;
+  kitabuView(id);
+})}
+function renameSomo(mid,kid){run(async()=>{
+  const t=prompt('Jina jipya la somo:',LS[mid]?.title||'');
+  if(t===null||!t.trim())return;
+  const {error}=await sb.from('masomo').update({title:t.trim()}).eq('id',mid);
+  if(error)throw error;
+  kitabuView(kid);
+})}
+function replaceAudio(mid,kid,inp){run(async()=>{
+  const f=inp.files[0];if(!f)return;
+  const old=LS[mid]?.audio_path;
+  const ext=(f.name.split('.').pop()||'m4a').toLowerCase();
+  const path=`${me.id}/${crypto.randomUUID()}.${ext}`;
+  const up=await sb.storage.from('audio').upload(path,f,{contentType:f.type||undefined});
+  if(up.error)throw up.error;
+  const {error}=await sb.from('masomo').update({audio_path:path,duration_seconds:await dur(f)}).eq('id',mid);
+  if(error)throw error;
+  if(old)await sb.storage.from('audio').remove([old]);
+  kitabuView(kid);
+})}
+function delSomo(mid,kid){run(async()=>{
+  const m=LS[mid];
+  if(!confirm('Futa somo "'+m.title+'"? Haliwezi kurudishwa.'))return;
+  if(m.audio_path)await sb.storage.from('audio').remove([m.audio_path]);
+  const {error}=await sb.from('masomo').delete().eq('id',mid);
+  if(error)throw error;
+  const {data:rest=[]}=await sb.from('masomo').select('id').eq('kitabu_id',kid).order('sort_order').order('created_at');
+  for(let i=0;i<rest.length;i++)await sb.from('masomo').update({sort_order:i+1}).eq('id',rest[i].id);
+  const {data:k}=await sb.from('kitabu').select('schedule_days').eq('id',kid).single();
+  if(k?.schedule_days?.length){const r=await sb.rpc('apply_schedule',{p_kitabu:kid});if(r.error)throw r.error}
+  kitabuView(kid);
+})}
+function playSomo(mid,path){run(async()=>{
+  const {data,error}=await sb.storage.from('audio').createSignedUrl(path,3600);
+  if(error)throw error;
+  $('pl_'+mid).innerHTML=`<audio controls autoplay preload="metadata" src="${data.signedUrl}" style="width:100%;margin-top:8px"></audio>`;
+})}
+const dur=f=>new Promise(r=>{const a=new Audio();a.preload='metadata';a.src=URL.createObjectURL(f);a.onloadedmetadata=()=>r(Math.round(a.duration)||null);a.onerror=()=>r(null)});
+function addSomo(kid,n,hasSched){run(async()=>{
+  const title=$('mt').value.trim(),f=$('mf').files[0];
+  if(!title)throw 'Weka jina la somo';if(!f)throw 'Chagua audio';
+  const b=$('up');b.disabled=true;b.textContent='Inapakia...';
+  try{
+    const ext=(f.name.split('.').pop()||'m4a').toLowerCase();
+    const path=`${me.id}/${crypto.randomUUID()}.${ext}`;
+    const up=await sb.storage.from('audio').upload(path,f,{contentType:f.type||undefined});
+    if(up.error)throw up.error;
+    const {error}=await sb.from('masomo').insert({kitabu_id:kid,title,description:$('md').value.trim()||null,audio_path:path,duration_seconds:await dur(f),sort_order:n+1});
+    if(error)throw error;
+    if(hasSched){const r=await sb.rpc('apply_schedule',{p_kitabu:kid});if(r.error)throw r.error}
+    localStorage.removeItem('dr_t_'+kid);localStorage.removeItem('dr_d_'+kid);
+    kitabuView(kid);
+  }catch(e){b.disabled=false;b.textContent='Pakia somo';throw e}
+})}
+
+function saveTeacher(){run(async()=>{
+  const n=$('tn').value.trim();if(!n)throw 'Weka jina lako';
+  const p=$('tp').value.trim()||null;
+  const g=$('tg').value.trim()||null,w=$('tw').value.trim()||null;
+  if(g&&!/^https?:\/\//.test(g))throw 'Link ya group lazima ianze na https://';
+  const {error}=await sb.from('teachers').update({display_name:n,payment_info:p,whatsapp_group:g,whatsapp_number:w}).eq('id',me.id);
+  if(error)throw error;
+  teacher.display_name=n;teacher.payment_info=p;teacher.whatsapp_group=g;teacher.whatsapp_number=w;
+  alert('Imehifadhiwa ✅');
+  teacherHome();
+})}
+
+/* ---------- ADA YA MWALIMU: siku 7 za neema, kisha kila kitu kinafungwa ---------- */
+const tActive=t=>!t||!t.plan_expires_at||new Date(t.plan_expires_at).getTime()+7*864e5>Date.now();
+
+/* ---------- KUMTOA / KUMRUDISHA MWANAFUNZI ---------- */
+function removeStu(sid){run(async()=>{
+  if(!confirm('Mtoe mwanafunzi huyu? Atatolewa kwenye fani zako zote na hataweza kujiunga tena kwa code mpaka umrudishe.'))return;
+  const r=await sb.rpc('remove_student',{p_student:sid});
+  if(r.error)throw r.error;
+  route();
+})}
+function unblock(sid){run(async()=>{
+  const r=await sb.rpc('unblock_student',{p_student:sid});
+  if(r.error)throw r.error;
+  alert('Amerudishwa. Anaweza kujiunga tena kwa join code yako.');
+  teacherHome();
+})}
+
+/* ---------- SWALI KWA MWALIMU (WhatsApp) ---------- */
+function askQ(mid){run(async()=>{
+  const m=LS[mid],c=window._ctx||{};
+  const txt=`📚 ${c.fani} › ${c.kitabu} › Somo ${m.sort_order}: ${m.title}\nSwali: `;
+  const go=u=>{window.open(u,'_blank')||(location.href=u)};
+  if(c.g){
+    try{await navigator.clipboard.writeText(txt)}catch(e){}
+    alert('Ujumbe umenakiliwa. Ukiingia kwenye group, bandika (paste) kisha andika swali lako.');
+    go(c.g);
+  }else if(c.n){
+    let d=c.n.replace(/\D/g,'');if(d.startsWith('0'))d='255'+d.slice(1);
+    go('https://wa.me/'+d+'?text='+encodeURIComponent(txt));
+  }else throw 'Mwalimu bado hajaweka link ya group wala namba ya WhatsApp';
+})}
+
+/* ---------- MALIPO: MWALIMU ANAIDHINISHA ---------- */
+function decide(id,ok){run(async()=>{
+  if(!confirm(ok?'Idhinisha malipo haya?':'Kataa malipo haya?'))return;
+  const r=await sb.rpc(ok?'approve_payment':'reject_payment',{p_payment:id});
+  if(r.error)throw r.error;
+  teacherHome();
+})}
+
+/* ---------- MWANAFUNZI ---------- */
+const hasAcc=e=>e&&e.status==='active'&&(!e.expires_at||new Date(e.expires_at)>new Date());
+const dt=d=>new Date(d).toLocaleDateString('sw-TZ',{day:'numeric',month:'short',year:'numeric'});
+const fmtT=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+
+async function studentHome(){
+  localStorage.removeItem('nav');
+  const [t,f,e,p]=await Promise.all([
+    sb.from('teachers').select('*'),
+    sb.from('fani').select('*').order('sort_order'),
+    sb.from('enrollments').select('*').eq('student_id',me.id),
+    sb.from('payments').select('enrollment_id').eq('status','pending')]);
+  const en={};(e.data||[]).forEach(x=>en[x.fani_id]=x);
+  const pend=new Set((p.data||[]).map(x=>x.enrollment_id));
+  const card=fn=>{
+    const x=en[fn.id];let s;
+    if(hasAcc(x))s='✅ '+(x.expires_at?'Hadi '+dt(x.expires_at):'Umefungua');
+    else if(x&&pend.has(x.id))s='⏳ Inasubiri idhini ya mwalimu';
+    else if(x&&x.status==='active')s='⚠️ Muda umeisha, lipa tena';
+    else s=PT[fn.price_type]+(fn.price_amount?' · '+fn.price_amount.toLocaleString()+' TZS':'');
+    return `<div class="card tap" onclick="run(()=>studentFani('${fn.id}'))"><b>${esc(fn.name)}</b><span class="m">${s}</span></div>`;
+  };
+  show(`${head('','Darasa')}<div class="wrap">
+  ${(t.data||[]).map(tc=>`<h3>${esc(tc.display_name)}</h3>${tActive(tc)?((f.data||[]).filter(x=>x.teacher_id===tc.id).map(card).join('')||'<span class="m">Hakuna fani bado.</span>'):'<div class="card"><span class="m">⛔ Huduma ya mwalimu huyu imesitishwa kwa muda. Wasiliana naye.</span></div>'}`).join('')}
+  <div class="card"><h4>Jiunge na mwalimu mwingine</h4><input id="jc" placeholder="Join code"><button onclick="joinT()">Jiunge</button></div></div>`);
+}
+
+async function studentFani(id){
+  localStorage.setItem('nav','sf:'+id);
+  const {data:f}=await sb.from('fani').select('*').eq('id',id).single();
+  const {data:t}=await sb.from('teachers').select('*').eq('id',f.teacher_id).single();
+  const {data:x}=await sb.from('enrollments').select('*').eq('fani_id',id).eq('student_id',me.id).maybeSingle();
+  if(!tActive(t)){
+    show(`${head('studentHome()',f.name)}<div class="wrap"><div class="card"><b>⛔ Huduma imesitishwa</b><span class="m">Mwalimu wako ana tatizo la ada ya huduma kwa sasa. Wasiliana naye, masomo yatarudi akishalipa.</span></div></div>`);
+    return;
+  }
+  if(hasAcc(x)){
+    const {data:ks=[]}=await sb.from('kitabu').select('*').eq('fani_id',id).order('sort_order');
+    show(`${head('studentHome()',f.name)}<div class="wrap">${x.expires_at?`<span class="m">Umelipia hadi ${dt(x.expires_at)}</span>`:''}<h3>Vitabu</h3>${ks.map(k=>`<div class="card tap" onclick="run(()=>studentKitabu('${k.id}'))"><b>${esc(k.title)}</b></div>`).join('')||'<span class="m">Bado hakuna kitabu.</span>'}</div>`);
+    return;
+  }
+  let ps=[];
+  if(x){const r=await sb.from('payments').select('*').eq('enrollment_id',x.id).order('created_at',{ascending:false});ps=r.data||[]}
+  const pend=ps.find(p=>p.status==='pending');
+  let body;
+  if(f.price_type==='free'&&!x){
+    body=`<button onclick="freeJoin('${id}')">Fungua fani hii (bure)</button>`;
+  }else if(pend){
+    body=`<p>⏳ Malipo yako (${pend.amount.toLocaleString()} TZS) yanasubiri idhini ya mwalimu. Akishayaidhinisha, masomo yataonekana hapa.</p><button onclick="run(()=>studentFani('${id}'))">Onyesha upya</button>`;
+  }else{
+    body=`<span class="m">1. Tuma pesa kwa mwalimu:</span><div class="card"><b>${esc(t.payment_info||'Mwalimu hajaweka namba ya malipo')}</b></div>
+    <span class="m">2. Weka namba ya muamala kisha bonyeza "Nimelipa"</span>
+    <input id="pr" placeholder="Namba ya muamala (hiari)"><input id="pam" type="number" inputmode="numeric" value="${f.price_amount}">
+    <button onclick="payNow('${id}',${x?`'${x.id}'`:'null'})">Nimelipa</button>
+    ${ps[0]?.status==='rejected'?'<span class="m">Malipo ya awali yalikataliwa. Hakikisha namba ni sahihi.</span>':''}`;
+  }
+  show(`${head('studentHome()',f.name)}<div class="wrap"><div class="card"><b>${PT[f.price_type]}${f.price_amount?' · '+f.price_amount.toLocaleString()+' TZS':''}</b>${body}</div></div>`);
+}
+function freeJoin(fid){run(async()=>{
+  const r=await sb.rpc('enroll',{p_fani:fid});if(r.error)throw r.error;
+  studentFani(fid);
+})}
+function payNow(fid,eid){run(async()=>{
+  const a=+$('pam').value;if(!a)throw 'Weka kiasi ulicholipa';
+  if(!eid){const r=await sb.rpc('enroll',{p_fani:fid});if(r.error)throw r.error;eid=r.data}
+  const r2=await sb.rpc('submit_payment',{p_enrollment:eid,p_amount:a,p_reference:$('pr').value.trim()||null});
+  if(r2.error)throw r2.error;
+  studentFani(fid);
+})}
+
+async function studentKitabu(id){
+  localStorage.setItem('nav','sk:'+id);
+  const {data:k}=await sb.from('kitabu').select('*').eq('id',id).single();
+  const {data:fn}=await sb.from('fani').select('name,teacher_id').eq('id',k.fani_id).single();
+  const {data:tc}=await sb.from('teachers').select('whatsapp_group,whatsapp_number').eq('id',fn.teacher_id).single();
+  window._ctx={fani:fn.name,kitabu:k.title,g:tc?.whatsapp_group,n:tc?.whatsapp_number};
+  const {data:ms,error}=await sb.rpc('get_lessons',{p_kitabu:id});
+  if(error)throw error;
+  const {data:pg=[]}=await sb.from('progress').select('*').eq('student_id',me.id);
+  const P={};pg.forEach(x=>P[x.somo_id]=x);window._P=P;
+  ms.forEach(m=>LS[m.id]=m);
+  show(`${head(`studentFani('${k.fani_id}')`,k.title)}<div class="wrap">${k.schedule_mode==='individual'?'<span class="m">Masomo yako yanafunguka kwa ratiba yako mwenyewe, kuanzia siku ulipoanza.</span>':''}${ms.map(m=>{
+    const p=P[m.id];
+    const st=m.is_unlocked?(p?.completed?'✅ Umemaliza':(p?.position_seconds>5?'▶ Endelea '+fmtT(p.position_seconds):'🎧 Sikiliza')):'🔒 Inafunguka '+fmt(m.unlock_at);
+    return `<div class="card ${m.is_unlocked?'tap':''}" ${m.is_unlocked?`onclick="openPlayer('${m.id}')"`:'style="opacity:.6"'}><b>${m.sort_order}. ${esc(m.title)}</b>${m.description?`<span class="m">${esc(m.description)}</span>`:''}<span class="m">${st}${m.duration_seconds?' · '+Math.round(m.duration_seconds/60)+' dk':''}</span></div>`;
+  }).join('')||'<span class="m">Bado hakuna somo.</span>'}<div style="height:250px"></div></div><div id="pl"></div>`);
+}
+
+/* ---------- PLAYER: resume, kasi, rudi sekunde 10 ---------- */
+let cur=null,lastSave=0;
+const SPEEDS=[1,1.25,1.5,1.75,2];
+function openPlayer(mid){run(async()=>{
+  const m=LS[mid];if(!m?.audio_path)throw 'Somo hili halina audio';
+  const {data,error}=await sb.storage.from('audio').createSignedUrl(m.audio_path,7200);
+  if(error)throw error;
+  const pr=window._P?.[mid];
+  const start=pr&&!pr.completed?(pr.position_seconds||0):0;
+  cur=mid;
+  $('pl').innerHTML=`<div class="player"><b>${esc(m.title)}</b>
+  <audio id="au" controls preload="metadata" src="${data.signedUrl}" style="width:100%;margin-top:6px"></audio>
+  <div class="row"><button onclick="$('au').currentTime=Math.max(0,$('au').currentTime-10)">⟲ 10s</button><button id="spd" onclick="cycSpeed()">${+localStorage.getItem('spd')||1}x</button><button onclick="$('au').currentTime+=10">10s ⟳</button></div><button class="ghost" style="width:100%" onclick="askQ('${mid}')">💬 Uliza swali kuhusu somo hili</button></div>`;
+  const a=$('au');
+  a.onloadedmetadata=()=>{a.playbackRate=+localStorage.getItem('spd')||1;if(start>5&&start<a.duration-3)a.currentTime=start};
+  a.onpause=()=>saveProg();
+  a.onended=()=>saveProg(true);
+  a.ontimeupdate=()=>{if(Date.now()-lastSave>5000)saveProg()};
+  a.play().catch(()=>{});
+})}
+function cycSpeed(){
+  const a=$('au');if(!a)return;
+  const c=+localStorage.getItem('spd')||1;
+  const n=SPEEDS[(SPEEDS.indexOf(c)+1)%SPEEDS.length];
+  localStorage.setItem('spd',n);a.playbackRate=n;$('spd').textContent=n+'x';
+}
+function saveProg(done){
+  const a=$('au');if(!a||!cur)return;
+  lastSave=Date.now();
+  const pos=done===true?0:Math.floor(a.currentTime);
+  if(window._P)window._P[cur]={position_seconds:pos,completed:done===true};
+  sb.from('progress').upsert({student_id:me.id,somo_id:cur,position_seconds:pos,completed:done===true,updated_at:new Date().toISOString()});
+}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)saveProg()});
+
+init();
+</script>
+</body>
+</html>
