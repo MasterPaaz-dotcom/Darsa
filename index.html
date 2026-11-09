@@ -57,7 +57,7 @@ async function init(){
   sb.auth.onAuthStateChange((ev,s)=>{
     const u=s?.user||null,changed=(u?.id||null)!==(me?.id||null);
     me=u;
-    if(changed){if(!u)localStorage.removeItem('nav');setTimeout(route,0)}
+    if(changed){if(!u){localStorage.removeItem('nav');localStorage.removeItem('mode')}setTimeout(route,0)}
   });
   route();
 }
@@ -70,7 +70,7 @@ async function route(){
     const {count}=await sb.from('teacher_students').select('*',{count:'exact',head:true}).eq('student_id',me.id);
     if(!count)return roleView();
     stu=true;
-  }
+  }else if(localStorage.getItem('mode')==='s'){stu=true}
   const n=(localStorage.getItem('nav')||'').split(':');
   try{
     if(!stu&&n[0]==='f')return await faniView(n[1]);
@@ -103,9 +103,12 @@ function doAuth(mode){run(async()=>{
 })}
 
 /* ---------- CHAGUA ROLE ---------- */
-function roleView(){
+async function roleView(){
+  const {data:pr}=await sb.from('profiles').select('can_teach').eq('id',me.id).maybeSingle();
+  const ok=!!pr?.can_teach;
   show(`${head('','Karibu')}<div class="wrap">
-  <div class="card"><h3>Mimi ni mwalimu</h3><input id="dn" placeholder="Jina lako (mf. Ustadh Ali)"><input id="pi" placeholder="Namba ya malipo (mf. M-Pesa 07xx xxx xxx, Jina)"><button onclick="mkTeacher()">Anza kufundisha</button></div>
+  ${ok?'<div class="card"><h3>Mimi ni mwalimu</h3><input id="dn" placeholder="Jina lako (mf. Ustadh Ali)"><input id="pi" placeholder="Namba ya malipo (mf. M-Pesa 07xx xxx xxx, Jina)"><button onclick="mkTeacher()">Anza kufundisha</button></div>'
+    :'<div class="card"><h4>👨‍🏫 Unataka kufundisha?</h4><span class="m">Akaunti za walimu zinaidhinishwa na msimamizi wa Darasa. Jisajili kwanza, kisha wasiliana naye akuruhusu, na urudi hapa.</span></div>'}
   <div class="card"><h3>Mimi ni mwanafunzi</h3><input id="jc" placeholder="Join code ya mwalimu"><button onclick="joinT()">Jiunge</button></div></div>`);
 }
 function mkTeacher(){run(async()=>{
@@ -131,6 +134,7 @@ async function teacherHome(){
   const banner=pe&&pe.getTime()-Date.now()<7*864e5?(pe<new Date()?`<div class="card" style="border-color:#ef4444">⚠️ Ada yako iliisha ${dt(pe)}. Una siku ${grace} za neema kabla huduma haijafungwa kabisa.</div>`:`<div class="card" style="border-color:#f59e0b">⏰ Ada yako inaisha ${dt(pe)}.</div>`):'';
   show(`${head('',teacher.display_name)}<div class="wrap">${banner}
   <div class="card">Join code yako: <b class="code">${esc(teacher.join_code)}</b><span class="m">Wape wanafunzi code hii wajiunge</span></div>
+  <button class="ghost" style="width:100%;margin:0 0 8px" onclick="setMode('s')">🎓 Hali ya mwanafunzi (soma kwa mwalimu mwingine)</button>
   <details class="card"><summary><b>⚙️ Mipangilio yangu</b></summary>
   <span class="m" style="margin-top:8px">Jina lako</span><input id="tn" value="${esc(teacher.display_name)}">
   <span class="m">Namba ya malipo (wanafunzi wataiona wanapolipa)</span><input id="tp" placeholder="mf. M-Pesa 07xx xxx xxx, Jina" value="${esc(teacher.payment_info||'')}">
@@ -291,6 +295,13 @@ function saveTeacher(){run(async()=>{
   teacherHome();
 })}
 
+/* ---------- MWALIMU ANAWEZA PIA KUWA MWANAFUNZI ---------- */
+function setMode(m){
+  localStorage.setItem('mode',m);
+  localStorage.removeItem('nav');
+  route();
+}
+
 /* ---------- ADA YA MWALIMU: siku 7 za neema, kisha kila kitu kinafungwa ---------- */
 const tActive=t=>!t||!t.plan_expires_at||new Date(t.plan_expires_at).getTime()+7*864e5>Date.now();
 
@@ -338,11 +349,12 @@ const fmtT=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
 
 async function studentHome(){
   localStorage.removeItem('nav');
-  const [t,f,e,p]=await Promise.all([
+  const [t,f,e,p,pr]=await Promise.all([
     sb.from('teachers').select('*'),
     sb.from('fani').select('*').order('sort_order'),
     sb.from('enrollments').select('*').eq('student_id',me.id),
-    sb.from('payments').select('enrollment_id').eq('status','pending')]);
+    sb.from('payments').select('enrollment_id').eq('status','pending'),
+    sb.from('profiles').select('can_teach').eq('id',me.id).maybeSingle()]);
   const en={};(e.data||[]).forEach(x=>en[x.fani_id]=x);
   const pend=new Set((p.data||[]).map(x=>x.enrollment_id));
   const card=fn=>{
@@ -354,7 +366,8 @@ async function studentHome(){
     return `<div class="card tap" onclick="run(()=>studentFani('${fn.id}'))"><b>${esc(fn.name)}</b><span class="m">${s}</span></div>`;
   };
   show(`${head('','Darasa')}<div class="wrap">
-  ${(t.data||[]).map(tc=>`<h3>${esc(tc.display_name)}</h3>${tActive(tc)?((f.data||[]).filter(x=>x.teacher_id===tc.id).map(card).join('')||'<span class="m">Hakuna fani bado.</span>'):'<div class="card"><span class="m">⛔ Huduma ya mwalimu huyu imesitishwa kwa muda. Wasiliana naye.</span></div>'}`).join('')}
+  ${teacher?'<button class="ghost" style="width:100%;margin:0 0 8px" onclick="setMode(\'t\')">👨‍🏫 Rudi Hali ya mwalimu</button>':(pr.data?.can_teach?'<button class="ghost" style="width:100%;margin:0 0 8px" onclick="roleView()">👨‍🏫 Umeidhinishwa kufundisha: Anza kufundisha</button>':'')}
+  ${(t.data||[]).filter(x=>x.id!==me.id).map(tc=>`<h3>${esc(tc.display_name)}</h3>${tActive(tc)?((f.data||[]).filter(x=>x.teacher_id===tc.id).map(card).join('')||'<span class="m">Hakuna fani bado.</span>'):'<div class="card"><span class="m">⛔ Huduma ya mwalimu huyu imesitishwa kwa muda. Wasiliana naye.</span></div>'}`).join('')}
   <div class="card"><h4>Jiunge na mwalimu mwingine</h4><input id="jc" placeholder="Join code"><button onclick="joinT()">Jiunge</button></div></div>`);
 }
 
