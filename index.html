@@ -171,6 +171,7 @@ async function faniView(id){
     return `<div class="card"><b>${esc(x.profiles?.full_name||'Mwanafunzi')}</b><span class="m">${esc(x.profiles?.phone||'')}</span><span class="m">${s} · Amelipa: ${tot.toLocaleString()} TZS (mara ${ap.length})</span><button class="ghost" style="color:#ef4444;margin-top:4px" onclick="removeStu('${x.student_id}')">Mtoe</button></div>`;
   }).join('');
   show(`${head('teacherHome()',f.name)}<div class="wrap">
+  <button class="ghost" style="margin:0 0 8px" data-n="${esc(f.name)}" onclick="renameFani('${id}',this.dataset.n)">✏️ Badili jina la fani</button>
   <div class="card"><h4>Malipo ya fani</h4><span class="m">Sasa: ${PT[f.price_type]}${f.price_amount?' · '+f.price_amount.toLocaleString()+' TZS':''}</span>
   <select id="pt">${Object.entries(PT).map(([k,v])=>`<option value="${k}" ${k===f.price_type?'selected':''}>${v}</option>`).join('')}</select>
   <input id="pa" type="number" inputmode="numeric" placeholder="Bei (TZS)" value="${f.price_amount||''}">
@@ -187,6 +188,20 @@ function addKitabu(fid,n){run(async()=>{
   if(error)throw error;faniView(fid);
 })}
 
+function renameKitabu(id,cur){run(async()=>{
+  const n=prompt('Jina jipya la kitabu:',cur||'');
+  if(n===null||!n.trim()||n.trim()===cur)return;
+  const {error}=await sb.from('kitabu').update({title:n.trim()}).eq('id',id);
+  if(error)throw error;
+  kitabuView(id);
+})}
+function renameFani(id,cur){run(async()=>{
+  const n=prompt('Jina jipya la fani:',cur||'');
+  if(n===null||!n.trim()||n.trim()===cur)return;
+  const {error}=await sb.from('fani').update({name:n.trim()}).eq('id',id);
+  if(error)throw error;
+  faniView(id);
+})}
 function changePrice(id,old){run(async()=>{
   const t=$('pt').value,a=+$('pa').value||0;
   if(t!=='free'&&!a)throw 'Weka bei';
@@ -203,6 +218,7 @@ async function kitabuView(id){
   const {data:ms=[]}=await sb.from('masomo').select('*').eq('kitabu_id',id).order('sort_order');
   ms.forEach(m=>LS[m.id]=m);
   show(`${head(`faniView('${k.fani_id}')`,k.title)}<div class="wrap">
+  <button class="ghost" style="margin:0 0 8px" data-n="${esc(k.title)}" onclick="renameKitabu('${id}',this.dataset.n)">✏️ Badili jina la kitabu</button>
   <div class="card"><h4>Ratiba ya kufungua masomo</h4>
   <span class="m">Mfumo</span>
   <select id="sm"><option value="class" ${k.schedule_mode!=='individual'?'selected':''}>Darasa zima (tarehe moja kwa wote)</option><option value="individual" ${k.schedule_mode==='individual'?'selected':''}>Kila mwanafunzi kivyake (anaanza somo la 1 akijiunga)</option></select>
