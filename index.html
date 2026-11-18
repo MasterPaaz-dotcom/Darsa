@@ -109,7 +109,7 @@ async function roleView(){
   show(`${head('','Karibu')}<div class="wrap">
   ${ok?'<div class="card"><h3>Mimi ni mwalimu</h3><input id="dn" placeholder="Jina lako (mf. Ustadh Ali)"><input id="pi" placeholder="Namba ya malipo (mf. M-Pesa 07xx xxx xxx, Jina)"><button onclick="mkTeacher()">Anza kufundisha</button></div>'
     :'<div class="card"><h4>👨‍🏫 Unataka kufundisha?</h4><span class="m">Akaunti za walimu zinaidhinishwa na msimamizi wa Darasa. Jisajili kwanza, kisha wasiliana naye akuruhusu, na urudi hapa.</span></div>'}
-  <div class="card"><h3>Mimi ni mwanafunzi</h3><input id="jc" placeholder="Join code ya mwalimu"><button onclick="joinT()">Jiunge</button></div></div>`);
+  <div class="card"><h3>Mimi ni mwanafunzi</h3><input id="jc" placeholder="Join code ya mwalimu"><button onclick="joinT()">Jiunge</button></div><div class="card"><h4>🔑 Una code ya kufungua fani?</h4><input id="cd" placeholder="XXXX-XXXX" autocapitalize="characters" autocomplete="off"><button id="cb" onclick="useCode(null)">Fungua</button></div></div>`);
 }
 function mkTeacher(){run(async()=>{
   const n=$('dn').value.trim();if(!n)throw 'Weka jina lako';
@@ -162,6 +162,8 @@ async function faniView(id){
   localStorage.setItem('nav','f:'+id);
   const {data:f}=await sb.from('fani').select('*').eq('id',id).single();
   const {data:ks=[]}=await sb.from('kitabu').select('*').eq('fani_id',id).order('sort_order');
+  const cr=await sb.from('access_codes').select('id,code,duration_days,used_by').eq('fani_id',id).order('created_at',{ascending:false});
+  const cds=cr.data||[],freeC=cds.filter(c=>!c.used_by);
   const {data:st=[]}=await sb.from('enrollments').select('id,student_id,status,expires_at,profiles(full_name,phone),payments(amount,status)').eq('fani_id',id).order('created_at');
   const live=st.filter(x=>x.status!=='rejected');
   const stRows=live.map(x=>{
@@ -176,6 +178,11 @@ async function faniView(id){
   <select id="pt">${Object.entries(PT).map(([k,v])=>`<option value="${k}" ${k===f.price_type?'selected':''}>${v}</option>`).join('')}</select>
   <input id="pa" type="number" inputmode="numeric" placeholder="Bei (TZS)" value="${f.price_amount||''}">
   <button onclick="changePrice('${id}','${f.price_type}')">Badili malipo</button></div>
+  <div class="card"><h4>🔑 Codes za kufungua</h4><span class="m">Mwanafunzi akilipa, mtumie code. Kila code inatumika mara moja tu.</span>
+  <div class="row"><div style="flex:1"><span class="m">Siku</span><input id="cdd" type="number" inputmode="numeric" value="30"></div><div style="flex:1"><span class="m">Idadi</span><input id="cdn" type="number" inputmode="numeric" value="5"></div></div>
+  <button onclick="genCodes('${id}')">Tengeneza codes</button>
+  ${freeC.map(c=>`<div class="row" style="align-items:center"><b class="code" style="font-size:16px;flex:1">${fmtCode(c.code)}</b><span class="m">siku ${c.duration_days}</span><button class="ghost" onclick="shareCode('${c.code}',${c.duration_days})">Tuma</button><button class="ghost" style="color:#ef4444" onclick="delCode('${c.id}','${id}')">Futa</button></div>`).join('')}
+  <span class="m">Zilizotumika: ${cds.length-freeC.length} · Zilizobaki: ${freeC.length}</span></div>
   <h3>Vitabu</h3>
   ${ks.map(k=>`<div class="card tap" onclick="kitabuView('${k.id}')"><b>${esc(k.title)}</b></div>`).join('')||'<span class="m">Bado hujaweka kitabu.</span>'}
   <div class="card"><h4>+ Kitabu kipya</h4><input id="kt" placeholder="Jina la kitabu (mf. Safina)"><button onclick="addKitabu('${id}',${ks.length})">Ongeza kitabu</button></div>
@@ -350,6 +357,37 @@ function askQ(mid){run(async()=>{
   }else throw 'Mwalimu bado hajaweka link ya group wala namba ya WhatsApp';
 })}
 
+/* ---------- CODES ---------- */
+const fmtCode=c=>String(c).replace(/(.{4})(?=.)/g,'$1-');
+function genCodes(fid){run(async()=>{
+  const d=+$('cdd').value,n=+$('cdn').value;
+  if(!(d>=1&&d<=3650))throw 'Siku ziwe 1 hadi 3650';
+  if(!(n>=1&&n<=50))throw 'Idadi iwe 1 hadi 50';
+  const r=await sb.rpc('generate_codes',{p_fani:fid,p_count:n,p_days:d});
+  if(r.error)throw r.error;
+  faniView(fid);
+})}
+function delCode(id,fid){run(async()=>{
+  const r=await sb.from('access_codes').delete().eq('id',id).is('used_by',null);
+  if(r.error)throw r.error;
+  faniView(fid);
+})}
+function shareCode(c,d){
+  const t='Code yako ya Darasa: '+fmtCode(c)+'\nInafungua masomo kwa siku '+d+'. Fungua app, weka code kwenye fani yako.';
+  window.open('https://wa.me/?text='+encodeURIComponent(t),'_blank');
+}
+function useCode(fid){run(async()=>{
+  const v=$('cd').value.trim();if(!v)throw 'Weka code';
+  const b=$('cb');b.disabled=true;
+  try{
+    const {data,error}=await sb.rpc('redeem_code',{p_code:v});
+    if(error)throw error;
+    if(!data.ok)throw data.error;
+    alert('Imefunguka ✅ Siku zilizobaki: '+data.days_left);
+    studentFani(data.fani_id);
+  }finally{b.disabled=false}
+})}
+
 /* ---------- MALIPO: MWALIMU ANAIDHINISHA ---------- */
 function decide(id,ok){run(async()=>{
   if(!confirm(ok?'Idhinisha malipo haya?':'Kataa malipo haya?'))return;
@@ -384,7 +422,7 @@ async function studentHome(){
   show(`${head('','Darasa')}<div class="wrap">
   ${teacher?'<button class="ghost" style="width:100%;margin:0 0 8px" onclick="setMode(\'t\')">👨‍🏫 Rudi Hali ya mwalimu</button>':(pr.data?.can_teach?'<button class="ghost" style="width:100%;margin:0 0 8px" onclick="roleView()">👨‍🏫 Umeidhinishwa kufundisha: Anza kufundisha</button>':'')}
   ${(t.data||[]).filter(x=>x.id!==me.id).map(tc=>`<h3>${esc(tc.display_name)}</h3>${tActive(tc)?((f.data||[]).filter(x=>x.teacher_id===tc.id).map(card).join('')||'<span class="m">Hakuna fani bado.</span>'):'<div class="card"><span class="m">⛔ Huduma ya mwalimu huyu imesitishwa kwa muda. Wasiliana naye.</span></div>'}`).join('')}
-  <div class="card"><h4>Jiunge na mwalimu mwingine</h4><input id="jc" placeholder="Join code"><button onclick="joinT()">Jiunge</button></div></div>`);
+  <div class="card"><h4>Jiunge na mwalimu mwingine</h4><input id="jc" placeholder="Join code"><button onclick="joinT()">Jiunge</button></div><div class="card"><h4>🔑 Una code ya kufungua fani?</h4><input id="cd" placeholder="XXXX-XXXX" autocapitalize="characters" autocomplete="off"><button id="cb" onclick="useCode(null)">Fungua</button></div></div>`);
 }
 
 async function studentFani(id){
@@ -398,7 +436,7 @@ async function studentFani(id){
   }
   if(hasAcc(x)){
     const {data:ks=[]}=await sb.from('kitabu').select('*').eq('fani_id',id).order('sort_order');
-    show(`${head('studentHome()',f.name)}<div class="wrap">${x.expires_at?`<span class="m">Umelipia hadi ${dt(x.expires_at)}</span>`:''}<h3>Vitabu</h3>${ks.map(k=>`<div class="card tap" onclick="run(()=>studentKitabu('${k.id}'))"><b>${esc(k.title)}</b></div>`).join('')||'<span class="m">Bado hakuna kitabu.</span>'}</div>`);
+    show(`${head('studentHome()',f.name)}<div class="wrap">${x.expires_at?`<div class="card"><b>⏳ Siku zilizobaki: ${Math.max(0,Math.ceil((new Date(x.expires_at)-Date.now())/864e5))}</b><span class="m">Mwisho: ${dt(x.expires_at)}</span><input id="cd" placeholder="Code mpya (kuongeza muda)" autocapitalize="characters" autocomplete="off"><button id="cb" onclick="useCode('${id}')">Ongeza muda</button></div>`:''}<h3>Vitabu</h3>${ks.map(k=>`<div class="card tap" onclick="run(()=>studentKitabu('${k.id}'))"><b>${esc(k.title)}</b></div>`).join('')||'<span class="m">Bado hakuna kitabu.</span>'}</div>`);
     return;
   }
   let ps=[];
@@ -410,11 +448,10 @@ async function studentFani(id){
   }else if(pend){
     body=`<p>⏳ Malipo yako (${pend.amount.toLocaleString()} TZS) yanasubiri idhini ya mwalimu. Akishayaidhinisha, masomo yataonekana hapa.</p><button onclick="run(()=>studentFani('${id}'))">Onyesha upya</button>`;
   }else{
-    body=`<span class="m">1. Tuma pesa kwa mwalimu:</span><div class="card"><b>${esc(t.payment_info||'Mwalimu hajaweka namba ya malipo')}</b></div>
-    <span class="m">2. Weka namba ya muamala kisha bonyeza "Nimelipa"</span>
-    <input id="pr" placeholder="Namba ya muamala (hiari)"><input id="pam" type="number" inputmode="numeric" value="${f.price_amount}">
-    <button onclick="payNow('${id}',${x?`'${x.id}'`:'null'})">Nimelipa</button>
-    ${ps[0]?.status==='rejected'?'<span class="m">Malipo ya awali yalikataliwa. Hakikisha namba ni sahihi.</span>':''}`;
+    body=`<span class="m">1. Lipa kwa mwalimu:</span><div class="card"><b>${esc(t.payment_info||'Mwalimu hajaweka namba ya malipo')}</b></div>
+    <span class="m">2. Mwalimu atakutumia code. Iweke hapa:</span>
+    <input id="cd" placeholder="XXXX-XXXX" autocapitalize="characters" autocomplete="off"><button id="cb" onclick="useCode('${id}')">Fungua</button>
+    ${x&&x.status==='active'?'<span class="m">Muda wako umeisha. Weka code mpya kuendelea.</span>':''}`;
   }
   show(`${head('studentHome()',f.name)}<div class="wrap"><div class="card"><b>${PT[f.price_type]}${f.price_amount?' · '+f.price_amount.toLocaleString()+' TZS':''}</b>${body}</div></div>`);
 }
